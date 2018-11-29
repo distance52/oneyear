@@ -1,0 +1,1596 @@
+<?php
+
+namespace App\Http\Controllers\Teacher;
+
+use App\Models\GroupStudent;
+use App\Models\Notify;
+use Illuminate\Http\Request;
+
+use Illuminate\Routing\UrlGenerator;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Redis as Redis;
+use SimpleSoftwareIO\QrCode\BaconQrCodeGenerator;
+use App\Http\Requests;
+use App\Models\Teacher;
+use App\Models\Squad;
+use App\Models\School;
+use App\Models\SchoolTime;
+use App\Models\Teaching\Plan;
+use App\Models\Teaching\Cell;
+use App\Models\Teaching\Module;
+use App\Models\Teaching\Node;
+use App\Models\Student;
+use App\Models\SquadStruct;
+use App\Models\Group;
+use App\Models\User;
+use App\Models\NodeSquad;
+use App\Models\StudentFinalScore;
+use App\Models\StudentPoint;
+use App\Models\Ext_wj_examp;
+use App\Models\Ext_wj_send;
+use App\Models\Ext_wj_results;
+use App\Models\CourseDate;
+use App\Http\Controllers\Api\Student\OnlineQaController;
+use App\Models\Teaching\PlanStruct;
+use DB;
+use App\Http\Controllers\Api\WechatNotifyController;
+use GatewayClient\Gateway as Gateway;
+use App\Models\PlanImGroup;
+//use Illuminate\Support\Facades\Redis as Redis;
+
+
+class SquadController extends BaseController
+{
+    public function __construct()
+    {
+        parent::__construct();
+    }
+
+    /**300036
+     * Display a listing of the resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function index()
+    {
+        $school_id=$this->school_id;
+        $teacherid = $this->teacher_id; //当前老师id
+        $aSearch = [];
+        $name= $income_year=$type=$where='';
+        \Request::has('name') &&  $aSearch['name']=$name = \Request::input('name');
+        \Request::has('income_year') && $aSearch['income_year']=$income_year = \Request::input('income_year');
+        \Request::has('teacher') && $aSearch['teacher']=$teacher = \Request::input('teacher');
+        \Request::has('type') && $aSearch['type']=$type = \Request::input('type');
+        //查询助教
+        $assistant = DB::table('squad_structs')
+        ->where(['struct_id'=>$this->teacher_id,'type'=>2])
+        ->get();
+        //查询助教
+        if($assistant->isEmpty()){
+           $oObjs = Squad::where(['teacher_id'=>$this->teacher_id,'school_id'=>$this->school_id])->with('plan','acdemy','dept','major')->orderBy('id','desc');
+            if($name!=''){
+            $oObjs->where("name","like",'%'.$name.'%');
+            }
+            if($income_year!=''){
+                $oObjs->where("income_year","=",$income_year);
+            }
+            if($type!=''){
+                $oObjs->where('type','=',$type);
+            }
+            $oObjs = $oObjs->paginate(20);
+            foreach ($oObjs as $ve) {
+                $ve->students = SquadStruct::where('squad_id',$ve->id)->where('type',1)->count();
+            } //dd($oObjs);
+            $school = School::where('id',$school_id)->first();
+            foreach($oObjs as &$val){
+                $module_info=NodeSquad::where('squad_id',$val->id)->where('type',1)->orderBy('id','desc')->first();
+                if(empty($module_info)){
+                    $val->cell_name='';
+                    $val->module_name='';
+                }
+                else{
+                    $cell_id=PlanStruct::where('module_id',$module_info->module_id)->where('plan_id',$val->plan_id)->take(1)->value('cell_id');
+                    $val->cell_name=Cell::where('id',$cell_id)->value('name');
+                    $val->module_name=Module::where('id',$module_info->module_id)->value('name');
+                }
+
+            }
+            $oObjs1 = "";
+            if (view()->exists(session('mode').'.teacherplat.squad.list')){
+                return View(session('mode').'.teacherplat.squad.list', compact('oObjs','oObjs1','aSearch','school_id','teacherid','assistant'));
+            }else{
+                return View('default.teacherplat.squad.list', compact('oObjs','oObjs1','aSearch','school_id','teacherid','assistant'));
+            }
+        }else{
+            //助教
+            foreach ($assistant as $key => $value) {
+                $assistantsquad[]=Squad::where(['school_id'=>$this->school_id])->where('id', $value->squad_id)->with('plan','acdemy','dept','major')->orderBy('id','desc');
+
+                if($name!=''){
+                    $assistantsquad["$key"]->where("name","like",'%'.$name.'%');
+                }
+                if($income_year!=''){
+                    $assistantsquad["$key"]->where("income_year","=",$income_year);
+                }
+                if($type!=''){
+                    $assistantsquad["$key"]->where('type','=',$type);
+                }
+            }
+
+            foreach ($assistantsquad as $key => $value) {
+                $oObjs1[] = $value->paginate(20);
+                
+            foreach ($oObjs1 as $key1 => $value1) {
+                foreach ($value1 as $ve) {
+                    $ve->students = SquadStruct::where('squad_id',$ve->id)->where('type',1)->count();
+                } //dd($oObjs);
+            }
+            $school = School::where('id',$school_id)->first();
+            foreach ($oObjs1 as $key => $oObjs1value) {
+                foreach($oObjs1value as &$val){
+                    $module_info=NodeSquad::where('squad_id',$val->id)->where('type',1)->orderBy('id','desc')->first();
+                    if(empty($module_info)){
+                        $val->cell_name='';
+                        $val->module_name='';
+                    }
+                    else{
+                        $cell_id=PlanStruct::where('module_id',$module_info->module_id)->where('plan_id',$val->plan_id)->take(1)->value('cell_id');
+                        $val->cell_name=Cell::where('id',$cell_id)->value('name');
+                        $val->module_name=Module::where('id',$module_info->module_id)->value('name');
+                    }
+
+                }
+            }
+            //助教
+        }
+        $oObjs = Squad::where(['teacher_id'=>$this->teacher_id,'school_id'=>$this->school_id])->with('plan','acdemy','dept','major')->orderBy('id','desc');
+        if($name!=''){
+            $oObjs->where("name","like",'%'.$name.'%');
+        }
+        if($income_year!=''){
+            $oObjs->where("income_year","=",$income_year);
+        }
+        if($type!=''){
+            $oObjs->where('type','=',$type);
+        }
+        $oObjs = $oObjs->paginate(20);
+        foreach ($oObjs as $ve) {
+            $ve->students = SquadStruct::where('squad_id',$ve->id)->where('type',1)->count();
+            } //dd($oObjs);
+		$school = School::where('id',$school_id)->first();
+        foreach($oObjs as &$val){
+            $module_info=NodeSquad::where('squad_id',$val->id)->where('type',1)->orderBy('id','desc')->first();
+            if(empty($module_info)){
+                $val->cell_name='';
+                $val->module_name='';
+            }
+            else{
+                $cell_id=PlanStruct::where('module_id',$module_info->module_id)->where('plan_id',$val->plan_id)->take(1)->value('cell_id');
+                $val->cell_name=Cell::where('id',$cell_id)->value('name');
+                $val->module_name=Module::where('id',$module_info->module_id)->value('name');
+            }
+			
+        }
+		if (view()->exists(session('mode').'.teacherplat.squad.list')){
+			return View(session('mode').'.teacherplat.squad.list', compact('oObjs','oObjs1','aSearch','school_id','teacherid','assistant'));
+		}else{
+			return View('default.teacherplat.squad.list', compact('oObjs','oObjs1','aSearch','school_id','teacherid','assistant'));
+		}
+    }
+}
+    /**
+     * Show the form for creating a new resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function create()
+    {
+        $school_id=$this->school_id;
+        $teacher_id = $this->teacher_id;
+        $plan_list = Plan::where('school_id',$school_id)->get();
+        // 查询助教老师
+        $oObjs = Teacher::where('school_id',$school_id)->with('user')->paginate(20);
+		if (view()->exists(session('mode').'.teacherplat.squad.create')){
+			return View(session('mode').'.teacherplat.squad.create', compact('school_id','plan_list','oObjs','teacher_id'));
+		}else{
+			return View('default.teacherplat.squad.create', compact('school_id','plan_list','oObjs','teacher_id'));
+		}
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\Response
+     */
+    public function store(Request $request)
+    {
+        $oSquad = new Squad();
+        $oSquad->type = $request->input('type',0);
+        $oSquad->name = $request->input('name');
+        $oSquad->teacher_id = $this->teacher_id;
+        $oSquad->school_id = $this->school_id;
+        $oSquad->acdemy_id = $request->input('acdemy_id',0);
+        $oSquad->dept_id = $request->input('dept_id',0);
+        $oSquad->major_id = $request->input('major_id',0);
+        $oSquad->income_year = $request->input('income_year');
+        $oSquad->address = $request->input('address');
+        $plan_id=$request->input('plan_id',0);
+        $check = $request->input('check');
+        if ($request->hasFile('teach_calendar')) {
+            if ($request->file('teach_calendar')->isValid()){
+                $file = $request->file('teach_calendar');
+                $file_name = time().str_random(6).$file->getClientOriginalName();
+                \Storage::disk('oss')->put($file_name, file_get_contents($file->getRealPath()));
+                if(\Storage::disk('oss')->exists($file_name)) {
+                    $oSquad->teach_calendar = $file_name;
+                } else {
+                    return back()->withInput()->withErrors(['msg' => '教学日历上传失败',]);
+                }
+            } else {
+                return back()->withInput()->withErrors(['msg' => '教学日历上传失败',]);
+            }
+        }
+        $oSquad->save();
+        ///////////////
+        $time = date("Y-m-d H:i:s",time());
+//        $squadid = DB::table('squads')
+//        ->where(['school_id'=>$this->school_id,'name'=>$oSquad->name])
+//        ->first();
+        $squad_id = $oSquad->id;
+        $data1 = ['squad_id'=>$squad_id,'struct_id'=>$this->teacher_id,'type'=>2,'created_at'=>$time, 'updated_at'=>$time];
+        $m1 = \DB::table("squad_structs")->insert($data1);//返回自增id
+
+        ////////////
+        //如果提交了教学方案，
+        if($plan_id>0){
+            $oSquad=Squad::where('school_id', $this->school_id)->where('teacher_id',$this->teacher_id)->orderBy('id','desc')->first();
+            $topic_group=Plan::where('id',$plan_id)->value('topic_group');
+            if($topic_group<>''){
+                foreach($topic_group as $val){
+                    Group::insert(array(
+                        'school_id'=>$this->school_id,
+                        'squad_id'=>$oSquad->id,
+                        'name'=>$val,
+                        'type'=>1,
+                    ));
+                }
+            }
+            $oSquad->plan_id=$plan_id;
+            $oSquad->save();
+            //增加plan 引用次数
+            Plan::find($plan_id)->increment('quote');
+        }
+        //添加助教
+        if(!empty($check)){
+            //查询添加班级的id
+           $squadid = DB::table('squads')
+           ->where(['school_id'=>$this->school_id,'name'=>$oSquad->name,'teacher_id'=>$this->teacher_id])
+           ->first();
+            //先删除所有关联关系
+            $d = DB::table('squad_structs')
+            ->where(['squad_id'=>$squadid->id,'type'=>2])
+            ->delete();
+            $oObjs = Teacher::where('school_id',$this->school_id)->with('user')->paginate(20);
+            foreach ($check as $key => $value) {
+                $time = date("Y-m-d H:i:s",time());
+                $data["$key"] = ['squad_id'=>$squadid->id,'struct_id'=>$value,'type'=>2,'created_at'=>$time, 'updated_at'=>$time];
+                    $m = \DB::table("squad_structs")->insert($data["$key"]);//返回自增id
+            }
+        }
+        return redirect('/teach/squad')->withInput()->withErrors(['msg' => '创建成功',]);
+    }
+
+    /**
+     * Display the specified resource.
+     *
+     * @param  int  $id
+     * @return \Illuminate\Http\Response
+     */
+    public function show($id)
+    {
+        //
+    }
+    //班级设置
+    /**
+     * Show the form for editing the specified resource.
+     *
+     * @param  int  $id
+     * @return \Illuminate\Http\Response
+     */
+    public function edit($id)
+    {
+        $school_id=$this->school_id;
+        $teacher_id = $this->teacher_id;//当前老师ID
+        $squad_id=$id;
+         //查询班主任的ID
+        $headmaster = DB::table('squads')
+        ->where(['id'=>$squad_id])
+        ->first();
+        // $headmasterctime =$headmaster->created_at;
+        // $headmasterutime =$headmaster->updated_at;
+        $headmasterid = $headmaster->teacher_id; 
+        //查询助教
+         $zhu = DB::table('squad_structs')
+        ->join('teachers','teachers.id','=','squad_structs.struct_id')
+        ->where(['squad_structs.squad_id'=>$squad_id,'squad_structs.type'=>2])
+        ->where('squad_structs.struct_id','!=',"$headmasterid")
+        ->select('teachers.*', 'squad_structs.*')
+        ->get();
+        if($zhu == null){
+            $zhu = '';
+
+        }
+        
+        //查询助教
+        //判断老师是不是属于该班级
+        $oObj = Squad::where(['id'=>$id,'teacher_id'=>$this->teacher_id,'school_id'=>$this->school_id])->with('teacher')->first();
+        $jurisdiction = DB::table('squad_structs')->where(['squad_id'=>$squad_id,'struct_id'=>$this->teacher_id,'type'=>2])->first();
+        if($jurisdiction != null){
+           $oObj = Squad::where(['id'=>$jurisdiction->squad_id,'school_id'=>$this->school_id])->with('teacher')->first();
+        }
+        if($oObj){
+            $school_info=School::where(['id'=>$school_id])->first(['admin_user_id','score_rank']);
+            $score_rank=$school_info->score_rank;
+            if($school_info->admin_user_id){
+                $name=User::where('id',$school_info->admin_user_id)->value('name');
+                $oObj->admin_name=$name;
+            }
+            else{
+                $oObj->admin_name='';
+            }
+            if($score_rank!=''){
+                $score_rank=json_decode($score_rank, true);
+                $oObj->score_rank = $score_rank;
+            }
+            else{
+                $oObj->score_rank = array(0,0,0,0,0,0);
+            }
+            $oBasic = config('basic');
+            $contact_phone=$oBasic['telephone'];
+            //已经上课了的不允许更改教学方案
+            $is_can_change_plan=1;
+            if(NodeSquad::where('squad_id', $id)->first()){
+                $is_can_change_plan=0;
+            };
+            //教学日历
+             $calendar = Squad::where(['id'=>$squad_id])->value('teach_calendar');
+             if ($calendar && \Storage::disk('oss')->exists($calendar)) {
+                 $calendar = \AliyunOSS::getUrl($calendar, $expire = new \DateTime("+1 day"), $bucket = config('filesystems.disks.oss.bucket'));
+             } else {
+                   $calendar = '';
+            }     
+
+            if (view()->exists(session('mode').'.teacherplat.squad.edit')){
+                return View(session('mode').'.teacherplat.squad.edit', compact('oObj','squad_id','contact_phone','is_can_change_plan','calendar','zhu'));
+            }else{
+                return View('default.teacherplat.squad.edit', compact('oObj','squad_id','contact_phone','is_can_change_plan','calendar','zhu'));
+            }
+        }else{
+           return redirect('error')->with(['msg'=>'班级不存在或班级不属于当前老师', 'href'=>app(UrlGenerator::class)->previous()]);
+       }
+    }
+
+    /**
+     * 查看某个班级可选的教学方案
+     * @param $id
+     * @return \Illuminate\Contracts\View\Factory|\Illuminate\View\View
+     */
+    public function plans($id){
+        $school_id=$this->school_id;
+        $oObjs = Plan::where('school_id',$school_id)->paginate(20);
+        foreach($oObjs as &$oObj){
+            if($oObj->icon && \Storage::disk('oss')->exists($oObj->icon)) {
+                $oObj->icon = \AliyunOSS::getUrl($oObj->icon, $expire = new \DateTime("+1 day"), $bucket = config('filesystems.disks.oss.bucket'));
+            } else {
+                $oObj->icon='/images/default-plan.png';
+            }
+        }
+		if (view()->exists(session('mode').'.teacherplat.squad.plans')){
+			return View(session('mode').'.teacherplat.squad.plans', compact('oObjs'));
+		}else{
+			return View('default.teacherplat.squad.plans', compact('oObjs'));
+		}
+    }
+
+    /**
+     * 查看某个班级可选的老师
+     * @param $id
+     * @return \Illuminate\Contracts\View\Factory|\Illuminate\View\View
+     */
+    public function teachers($id){
+        $school_id=$this->school_id;
+        $oObjs = Teacher::where('school_id',$school_id)->with('user')->paginate(20);
+		if (view()->exists(session('mode').'.teacherplat.squad.teachers')){
+			return View(session('mode').'.teacherplat.squad.teachers', compact('oObjs'));
+		}else{
+			return View('default.teacherplat.squad.teachers', compact('oObjs'));
+		}
+    }
+      /**
+     * 更换助教
+     * @param $id
+     * @return \Illuminate\Contracts\View\Factory|\Illuminate\View\View
+     */
+    public function assistant($id){
+        $school_id=$this->school_id;
+        $teacher_id = $this->teacher_id;//当前老师ID
+        $oObjs = Teacher::where('school_id',$school_id)->with('user')->paginate(20);
+
+        $squad_id = $id;
+        $nowassistant = DB::table('squad_structs')
+        ->join('teachers','teachers.id','=','squad_structs.struct_id')
+        ->where(['squad_structs.squad_id'=>$squad_id,'squad_structs.type'=>2])
+        // ->where('squad_structs.struct_id','!=',"$teacher_id")
+        ->select('teachers.*', 'squad_structs.*')
+        ->get();
+        $headmaster = DB::table('squads')
+        ->where(['id'=>$squad_id])
+        ->first();
+        // $headmasterctime =$headmaster->created_at;
+        // $headmasterutime =$headmaster->updated_at;
+        $headmasterid = $headmaster->teacher_id; 
+        return View('default.teacherplat.squad.cassistant', compact('oObjs','id','nowassistant','headmasterid'));
+    }
+    //写入助教
+    // public function cassistant(Request $request){
+    //     $school_id=$this->school_id;
+    //     $squad_id = $request->input('squad_id');
+    //     $struct_id = $request->input('struct_id');
+    //     // dd($struct_id);die;
+    //     if($struct_id != "you"){
+    //         $oObjs = Teacher::where('school_id',$school_id)->with('user')->paginate(20);
+    //         $data = ['squad_id'=>$squad_id,'struct_id'=>$struct_id,'type'=>2];
+    //         $m = \DB::table("squad_structs")->insertGetId($data);//返回自增id
+    //         if($m>0){
+    //             return back()->withInput()->withInput()->withErrors(['msg' => '设置助教成功',]);
+    //         }else{
+    //             return back()->withInput()->withInput()->withErrors(['msg' => '设置助教失败',]);
+    //         }
+    //     }else{
+    //         return back()->withInput()->withInput()->withErrors(['msg' => '没有设置助教',]);
+    //     }
+      
+
+    // }
+    //更新助教updateassistant
+    public function updateassistant(Request $request,$id){
+        $school_id=$this->school_id;
+        $squad_id = $id;
+        $check = $request->input('ary',0);  //传过来的id号
+        if(!$squad_id){
+            $msg = ["custom-msg"=> ["参数缺失"],];
+            return response()->json($msg)->setStatusCode(422);
+        }
+        //查询班主任的ID
+        $headmaster = DB::table('squads')
+        ->where(['id'=>$squad_id])
+        ->first();
+        $headmasterctime =$headmaster->created_at;
+        $headmasterutime =$headmaster->updated_at;
+        $headmasterid = $headmaster->teacher_id; 
+        //先删除所有关联关系
+        $d = DB::table('squad_structs')
+        ->where(['squad_id'=>$squad_id,'type'=>2])
+        ->delete();
+        $oObjs = Teacher::where('school_id',$school_id)->with('user')->paginate(20);
+        if(!empty($check)){
+            $data2 = ['squad_id'=>$squad_id,'struct_id'=>$headmasterid,'type'=>2,'created_at'=>$headmasterctime, 'updated_at'=>$headmasterutime];
+            $m2 = \DB::table("squad_structs")->insert($data2);//返回自增id
+            $time = date("Y-m-d H:i:s",time());
+            foreach ($check as $key => $value) {
+                $data["$key"] = ['squad_id'=>$squad_id,'struct_id'=>$value,'type'=>2,'created_at'=>$time, 'updated_at'=>$time];
+                $m = \DB::table("squad_structs")->insert($data["$key"]);//返回自增id
+            }
+            if($m>0){
+                return response()->json(null);
+            }else {
+                $msg = [
+                "custom-msg"=> ["设置助教失败"],
+                ];
+                return response()->json($msg)->setStatusCode(422);
+            }
+        }else {
+            //先删除所有关联关系
+            $d = DB::table('squad_structs')
+            ->where(['squad_id'=>$squad_id,'type'=>2])
+            ->delete();
+            $data2 = ['squad_id'=>$squad_id,'struct_id'=>$headmasterid,'type'=>2,'created_at'=>$headmasterctime, 'updated_at'=>$headmasterutime];
+            $m2 = \DB::table("squad_structs")->insert($data2);//返回自增id
+            if($d>0){
+                return response()->json(null);
+            }else {
+                $msg = [
+                "custom-msg"=> ["设置助教失败"],
+                ];
+                return response()->json($msg)->setStatusCode(422);
+            }
+        }
+        // if($struct_id == 'no'){
+        //     $m = DB::table('squad_structs')
+        //     ->where(['squad_id'=>$squad_id,'struct_id'=>$nowassistantid,'type'=>2])
+        //     ->delete();
+        //     if($m>0){
+        //        return redirect("/teach/squad")->withInput()->withErrors(['msg' => '更新助教成功',]);
+        //     }else{
+        //         return redirect("/teachone/squad/squadsetting/$squad_id")->withInput()->withErrors(['msg' => '更新助教失败',]);
+        //     }
+        // }else{
+        //     $m = DB::table('squad_structs')
+        //     ->where(['squad_id'=>$squad_id,'struct_id'=>$nowassistantid,'type'=>2])
+        //     ->update(array('struct_id' => $struct_id));
+        //     if($m>0){
+        //         return redirect("/teach/squad")->withInput()->withErrors(['msg' => '更新助教成功',]);
+        //     }else{
+        //         return redirect("/teachone/squad/squadsetting/$squad_id")->withInput()->withErrors(['msg' => '更新助教失败',]);
+        //    }
+        // }
+  }
+    /**
+     * 改变教学方案
+     * @param Request $request
+     * @param $id
+     * @return $this|\Symfony\Component\HttpFoundation\Response
+     */
+    public function changePlan(Request $request,$id){
+        $plan_id=$request->input('plan_id',0);
+        if(!$id || !$plan_id){
+            $msg = ["custom-msg"=> ["参数缺失"],];
+            return response()->json($msg)->setStatusCode(422);
+        }
+        //查询这个这个学校这个老师教的这个班级是否存在，避免通过传参改其他学校的
+        $oSquad = Squad::where(['id'=>$id,'teacher_id'=>$this->teacher_id,'school_id'=>$this->school_id])->first();
+        if($oSquad) {
+            //判断该班级是否已经开课，已经开课不允许更换
+            if(NodeSquad::where('squad_id', $id)->first()){
+                $msg = ["custom-msg"=> ["该班级已经开课了，不支持更换方案"],];
+                return response()->json($msg)->setStatusCode(422);
+            }
+            $topic_group=Plan::where('id',$plan_id)->value('topic_group');
+            if($topic_group<>''){
+                $groups=Group::where(['squad_id'=>$id,'type'=>1])->pluck('id');
+                if($groups){
+                    //删除原先的专题组
+                    GroupStudent::whereIn('group_id',$groups)->delete();
+                    Group::where(['squad_id'=>$id,'type'=>1])->delete();
+                }
+                foreach($topic_group as $val){
+                    Group::insert(array(
+                        'school_id'=>$oSquad->school_id,
+                        'squad_id'=>$oSquad->id,
+                        'name'=>$val,
+                        'type'=>1,
+                    ));
+                }
+            }
+            $oSquad->plan_id=$plan_id;
+            $oSquad->save();
+            return response()->json(null);
+        } else {
+            $msg = [
+                "custom-msg"=> ["班级不存在或班级不属于当前老师"],
+            ];
+            return response()->json($msg)->setStatusCode(422);
+        }
+    }
+
+    /**
+     * 开始分配积分
+     */
+    public function distributionScore($squad_id){
+        $oObj=Squad::where(['id'=>$squad_id])->first();
+        $oObj->distribution_score=time();
+        $oObj->save();
+        return response()->json(null);
+    }
+
+    /**
+     * 教学日历
+     */
+    public function calendar($squad_id,Request $request){
+        $course_id = $request->get('course_id');
+        $time = date('Y-m-d H:i:s',time());
+        $squad = Squad::where('id',$squad_id)->select('school_id','address')->first();
+        //dd($squad);
+        $school_time = SchoolTime::where('school_id',$squad->school_id)->where('mainid','0')->first();
+        //dd($school_time);
+        if($course_id){
+            $calendar = CourseDate::where('id',$course_id)->first();
+        }else{
+            $calendar = CourseDate::where('squad_id',$squad_id)->where('week_start','<=',$time)->where('week_end','>=',$time)->first();
+        }
+        
+        //dd($calendar);
+        $calendar_all = CourseDate::where('squad_id',$squad_id)->get();
+        //dd($calendar_all);
+        if($calendar){
+            $Monday = explode(',',$calendar->Monday);
+        
+            $Tuesday = explode(',',$calendar->Tuesday);
+            $Wednesday = explode(',',$calendar->Wednesday);
+            $Thursday = explode(',',$calendar->Thursday);
+            $Friday = explode(',',$calendar->Friday);
+            $Saturday = explode(',',$calendar->Saturday);
+            $Sunday = explode(',',$calendar->Sunday);
+        }else{
+           $Monday  = array() ;
+            $Tuesday = array() ;
+           $Wednesday  = array() ;
+            $Thursday = array() ;
+            $Friday = array() ;
+            $Saturday = array() ;
+            $Sunday = array() ;
+           
+        }
+        
+        /*dd($calendar);
+        $Monday = $calendar->Monday;
+        
+        $Tuesday = $calendar->Tuesday;
+        $Wednesday = $calendar->Wednesday;
+        $Thursday = $calendar->Thursday;
+        $Friday = $calendar->Friday;
+        $Saturday = $calendar->Saturday;
+        $Sunday = $calendar->Sunday;*/
+        
+        
+        //dd($Tuesday);
+        if (view()->exists(session('mode').'.teacherplat.squad.calendar-v2')){
+                return View(session('mode').'.teacherplat.squad.calendar-v2', compact('squad_id','calendar','calendar_all','squad','school_time','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'));
+        }else{
+                return View('default.teacherplat.squad.calendar-v2', compact('squad_id','calendar','calendar_all','squad','school_time','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'));
+        }
+        /*$calendar = Squad::where(['id'=>$squad_id])->value('teach_calendar');
+        if ($calendar && \Storage::disk('oss')->exists($calendar)) {
+            $calendar = \AliyunOSS::getUrl($calendar, $expire = new \DateTime("+1 day"), $bucket = config('filesystems.disks.oss.bucket'));
+        } else {
+            $calendar = '';
+        }
+		if (view()->exists(session('mode').'.teacherplat.squad.calendar')){
+			return View(session('mode').'.teacherplat.squad.calendar', compact('calendar','squad_id'));
+		}else{
+			return View('default.teacherplat.squad.calendar', compact('calendar','squad_id'));
+		}*/
+    }
+    
+    /**
+     * 教学日历添加
+     */
+    public function addCalendar(Request $request){
+        
+        
+        echo '111';die;
+        
+    }
+    public function doAddCalendar(Request $request){
+        $squad_id = $request->input('squad_id');
+        $name = $request->input('name');
+        $week_start = $request->input('week_start');
+        $week_end = $request->input('week_end');
+        $Monday = $request->input('Monday');
+        $Tuesday = $request->input('Tuesday');
+        $Wednesday = $request->input('Wednesday');
+        $Thursday = $request->input('Thursday');
+        $Friday = $request->input('Friday');
+        $Saturday = $request->input('Saturday');
+        $Sunday = $request->input('Sunday');
+        //echo $squad_id.'-'.$name.'-'.$week_start.'-'.$week_end.'-'.$Monday.'-'.$Tuesday.'-'.$Wednesday.'-'.$Thursday.'-'.$Friday.'-'.$Saturday.'-'.$Sunday;die;
+        $calendar = new CourseDate();
+        $calendar->squad_id = $squad_id;
+        $calendar->name = $name;
+        $calendar->week_start = $week_start;
+        $calendar->week_end = $week_end;
+        $calendar->Monday = $Monday;
+        $calendar->Tuesday = $Tuesday;
+        $calendar->Wednesday = $Wednesday;
+        $calendar->Thursday = $Thursday;
+        $calendar->Friday = $Friday;
+        $calendar->Saturday = $Saturday;
+        $calendar->Sunday = $Sunday;
+        $res = $calendar->save();
+        if($res){
+             //var_dump($res);die;
+             $addsucs = array('state'=>'trues','id'=>$calendar->id,'name'=>$calendar->name);
+             $addsuc = json_encode($addsucs);
+             return response()->json($addsuc);
+        }
+        
+    }
+    
+    public function editCalendar($id){
+        //$id = $request->input('id');
+        echo $id;
+        $coursedate = CourseDate::where('id',$id)->first();
+        $name = $coursedate->name;
+        $week_start = $coursedate->week_start;
+        $week_end = $coursedate->week_end;
+
+        $Monday = explode(',',$coursedate->Monday);
+        $Tuesday = explode(',',$coursedate->Tuesday);
+        $Wednesday = explode(',',$coursedate->Wednesday);
+        $Thursday = explode(',',$coursedate->Thursday);
+        $Friday = explode(',',$coursedate->Friday);
+        $Saturday = explode(',',$coursedate->Saturday);
+        $Sunday = explode(',',$coursedate->Sunday);
+        
+        $data = array('id'=>$id,'name'=>$name,'week_start'=>$week_start,'week_end'=>$week_end,'Monday'=>$Monday,'Tuesday'=>$Tuesday,'Wednesday'=>$Wednesday,'Thursday'=>$Thursday,'Friday'=>$Friday,'Saturday'=>$Saturday,'Sunday'=>$Sunday);
+        $data = json_encode($data);
+        dd($data);
+        return response()->json($data);
+    }
+    
+    public function doEditCalendar(Request $request){
+        $id = $request->input('zid');
+        //echo $id;die;
+        $name = $request->input('name');
+        $week_start = $request->input('week_start');
+        $week_end = $request->input('week_end');
+        $Monday = $request->input('Monday');
+        $Tuesday = $request->input('Tuesday');
+        $Wednesday = $request->input('Wednesday');
+        $Thursday = $request->input('Thursday');
+        $Friday = $request->input('Friday');
+        $Saturday = $request->input('Saturday');
+        $Sunday = $request->input('Sunday');
+        if($id){
+            $calendar = CourseDate::find($id);
+        
+            $calendar->name = $name;
+            $calendar->week_start = $week_start;
+            $calendar->week_end = $week_end;
+            $calendar->Monday = $Monday;
+            $calendar->Tuesday = $Tuesday;
+            $calendar->Wednesday = $Wednesday;
+            $calendar->Thursday = $Thursday;
+            $calendar->Friday = $Friday;
+            $calendar->Saturday = $Saturday;
+            $calendar->Sunday = $Sunday;
+            $res = $calendar->save();
+            if($res){
+                 $addsucs = array('state'=>'true');
+                 $addsuc = json_encode($addsucs);
+                 return response()->json($addsuc);
+            }
+        }
+        
+    }
+    
+    /**
+     * 修改老师
+     * @param Request $request
+     * @param $id
+     * @return $this|\Symfony\Component\HttpFoundation\Response
+     */
+    public function changeTeacher(Request $request,$id){
+        $teacher_id=$request->input('teacher_id',0);
+        //查询这个这个学校这个老师教的这个班级是否存在
+        $oSquad = Squad::where(['id'=>$id,'teacher_id'=>$this->teacher_id,'school_id'=>$this->school_id])->first();
+
+        if($oSquad) {
+            $oSquad->teacher_id=$teacher_id;
+            $oSquad->save();
+            return response()->json(null);
+        } else {
+            $msg = [
+                "custom-msg"=> ["班级不存在或班级不属于当前老师"],
+            ];
+            return response()->json($msg)->setStatusCode(422);
+        }
+    }
+
+    /**
+     * 开始上课
+     * @param $id
+     * @return $this|\Illuminate\Contracts\View\Factory|\Illuminate\View\View
+     */
+    public function beginClassV2($id){
+        $structs = [];
+        $school_id=$this->school_id;
+        // 获取教学方案数据
+        $squad_id = $id;
+        $oSquad = Squad::where(['id'=>$id,'teacher_id'=>$this->teacher_id])->with('teacher')->first();
+        $jurisdiction = DB::table('squad_structs')->where(['squad_id'=>$squad_id,'struct_id'=>$this->teacher_id,'type'=>2])->first();
+        if($jurisdiction != null){
+            $oSquad = Squad::where(['id'=>$jurisdiction->squad_id])->with('teacher')->first();
+        }
+		if(!$oSquad){
+			return redirect('error')->with(['msg'=>'班级不存在或班级不属于当前老师', 'href'=>app(UrlGenerator::class)->previous()]);
+		}
+		// $oNodes = $oSquad->nodes()->get();
+        if($oSquad && $oSquad->plan) {
+            $oPlan = $oSquad->plan;
+            $structs = $oPlan->detailStructV2();
+            if($structs) {
+                foreach ($structs as $key => &$cell) {
+                    if(!$cell['obj']->times) {
+                        if(isset($cell['list']) && $cell['lists'] && is_array($cell['lists'])) {
+                            foreach($cell['lists'] as $module) {
+                                $cell['obj']->times += $module['obj']->times;
+                            }
+                        }
+                    }
+                }
+            }
+            // 已完成的环节
+            $oModuleSquad = NodeSquad::where('squad_id', $id)->where('type',1)->where('module_id','>',0)->pluck('module_id')->toArray();
+			if (view()->exists(session('mode').'.teacherplat.squad.beginclass-v2')){
+				return View(session('mode').'.teacherplat.squad.beginclass-v2', compact('structs','oSquad','squad_id','oPlan','oModuleSquad'));
+			}else{
+				return View('default.teacherplat.squad.beginclass-v2', compact('structs','oSquad','squad_id','oPlan','oModuleSquad'));
+			}
+        }
+
+        // 返回错误页面
+        return redirect('error')->with(['msg'=>'没有给该班绑定教学方案，请去班级管理页面进行设置！', 'href'=>app(UrlGenerator::class)->previous()]);
+
+    }
+
+    public function console_v2($squad_id, $planStruct_id) {
+        // 这里的squad_id其实是plan_structs的id
+        $oPlanStruct = PlanStruct::find($planStruct_id);
+        if(!$oPlanStruct) {
+            return redirect('error')->with(['msg'=>'参数错误，资源不存在', 'href'=>app(UrlGenerator::class)->previous()]);
+        }
+        $oUser = \Auth::user();
+        $plan_id = $oPlanStruct->plan_id;
+        //
+        $oCell = Cell::find($oPlanStruct->cell_id);
+        $oNode = Node::find($oPlanStruct->node_id);
+        $oModule = Module::find($oPlanStruct->module_id);
+        $oSquad = Squad::whereId($squad_id)->first();
+        $cells = $oPlanStruct->getCells();
+        if($cells) {
+            foreach ($cells as &$cell) {
+                $tmpCellPlanStruct_id = PlanStruct::where('plan_id', $plan_id)
+                    ->where('cell_id', $cell['obj']->id)
+                    ->where('module_id', '>',0)
+                    ->orderBy('module_ord','asc')
+                    ->value('id');
+                if(!$tmpCellPlanStruct_id) {
+                    $cell['href'] = '';
+                } else {
+                    $cell['href'] = url('teachone/squad/console',[$squad_id, $tmpCellPlanStruct_id]);
+                }
+            }
+        }
+        $modules = $oPlanStruct->getModules();
+        if($modules) {
+            foreach($modules as &$module) {
+                $module['href'] = url('teachone/squad/console',[$squad_id, $module['planStruct']->id]);
+            }
+        }
+        $nodes = $oPlanStruct->getNodes();
+        
+		if($nodes && $squad_id) {
+            foreach($nodes as &$node) {
+                if($node['obj']) {
+                        $oYuxi = NodeSquad::where('node_id', $oNode->id)->where('squad_id', $squad_id)->where('type',3)->first();
+                        $oPaper = NodeSquad::where('node_id', $oNode->id)->where('squad_id', $squad_id)->where('type',2)->first();
+                        $oYuxi && $node['yuxi'] = $oYuxi;
+                        $oPaper && $nodes['paper'] =$oPaper;
+						if($node['obj']->wj_id){
+							$node['obj']->wj_examp = Ext_wj_examp::where('id',$node['obj']->wj_id)->first();
+						}
+                    }
+            }
+        }
+        if($squad_id) {
+            // 模块是否已经学习过
+            $oComplete = NodeSquad::where('module_id', $oModule->id)
+                ->where('squad_id', $squad_id)
+                ->where('type',1)
+                ->first(['id']);
+        }
+        //
+		if (view()->exists(session('mode').'.teacherplat.squad.console-v2')){
+			return View(session('mode').'.teacherplat.squad.console-v2', compact('oPlanStruct','oCell','oModule','cells','modules','nodes','oSquad','oComplete'));
+		}else{
+			return View('default.teacherplat.squad.console-v2', compact('oPlanStruct','oCell','oModule','cells','modules','nodes','oSquad','oComplete'));
+		}
+
+    }
+
+
+    public function screen_v2($squad_id, $planStruct_id){
+
+        $oPlanStruct = PlanStruct::find($planStruct_id);
+        if(!$oPlanStruct) {
+            return redirect('error')->with(['msg'=>'参数错误，资源不存在', 'href'=>app(UrlGenerator::class)->previous()]);
+        }
+        $oUser = \Auth::user();
+        $plan_id = $oPlanStruct->plan_id;
+        //
+
+        $oCell = Cell::find($oPlanStruct->cell_id);
+        $oNode = Node::find($oPlanStruct->node_id);
+        $oModule = Module::find($oPlanStruct->module_id);
+        $squad_id && $oSquad = Squad::whereId($squad_id)->first();
+        $cells = $oPlanStruct->getCells();
+        if($cells) {
+            foreach ($cells as &$cell) {
+                $tmpCellPlanStruct_id = PlanStruct::where('plan_id', $plan_id)
+                    ->where('cell_id', $cell['obj']->id)
+                    ->where('module_id', '>',0)
+                    ->orderBy('module_ord','asc')
+                    ->value('id');
+                if(!$tmpCellPlanStruct_id) {
+                    $cell['href'] = '';
+                } else {
+                    $cell['href'] = url('teachone/squad/screen',[$squad_id, $tmpCellPlanStruct_id]);
+                }
+
+            }
+        }
+        $modules = $oPlanStruct->getModules();
+        if($modules) {
+            foreach($modules as &$module) {
+                $module['href'] = url('teachone/squad/screen',[$squad_id, $module['planStruct']->id]);
+            }
+        }
+        $nodes = $oPlanStruct->getNodes();
+        if(!$nodes) {
+            // 获取下一个模块
+            $oModuleList = $oPlanStruct->getAllIdsByModules();
+            if($oModuleList) {
+                foreach($oModuleList as $key=>$m_id) {
+                    if($m_id == $planStruct_id) {
+                        $next_id = isset($oModuleList[$key+1])? $oModuleList[$key+1]: $planStruct_id;
+                        break;
+                    }
+                }
+            }
+            !$next_id && $next_id = $planStruct_id;
+            $next_url = url('teachone/squad/screen', [$squad_id,$next_id]);
+            $info = '该模块没有环节！';
+			if (view()->exists(session('mode').'.info')){
+				return View(session('mode').'.info', compact('info', 'next_url'));
+			}else{
+				return View('default.info', compact('info', 'next_url'));
+			}
+        }
+        foreach($nodes as &$node) {
+            if(isset($node['obj']) && $node['obj']) {
+				if($node['obj']->info_id && $node['obj']->info && $node['obj']->info->type ==3) {
+//                    $node['scan_sign'] = 'iframe-imginfo-'.$node['obj']->info->sign;
+//                    $node['scan_src'] = '/preview/info/'.$node['obj']->info->sign;
+
+                    $scan_html = '<iframe width="100%" height="100%" class="iframe-imginfo" id="iframe-imginfo-'.$node['obj']->info->sign.'" scrolling="no" frameborder="0" src="/preview/info/'.$node['obj']->info->sign.'"></iframe>';
+                } elseif($node['obj']->info_id && $node['obj']->info && $node['obj']->type < 2) {
+//                    $node['scan_sign'] = 'iframe-info-'.$node['obj']->info->sign;
+//                    $node['scan_src'] = '/preview/info/' . $node['obj']->info->sign;
+                    $scan_html = '<iframe width="100%" height="100%" class="iframe-info" id="iframe-info-'.$node['obj']->info->sign.'" scrolling="no" frameborder="0" src="/preview/info/'.$node['obj']->info->sign.'"></iframe>';
+                }elseif($node['obj']->wj_id && $node['obj']->type ==6) {
+//                    $node['scan_sign'] = 'iframe-wj_examp-'.$node['obj']->wj_examp;
+//                    $node['scan_src'] = '/teachone/squad/wj_result/' .$squad_id.'/'.$oModule->id.'/'.$node['obj']->id;
+                    $scan_html = '<iframe width="100%" height="100%" class="iframe-exampaper" id="iframe-wj_examp-'.$node['obj']->wj_examp.'" scrolling="no" frameborder="0" src="/teachone/squad/wj_result/'.$squad_id.'/'.$oModule->id.'/'.$node['obj']->id.'" ></iframe>';
+                }elseif($node['obj']->exampaper) {
+//                    $node['scan_sign'] = 'iframe-exampaper-'.$node['obj']->exampaper_id;
+//                    $node['scan_src'] = '/resource/exampaper/view/' .$node['obj']->exampaper_id;
+                    $scan_html = '<iframe width="100%" height="100%" class="iframe-exampaper" id="iframe-exampaper-'.$node['obj']->exampaper_id.'" scrolling="no" frameborder="0" src="/resource/exampaper/view/'.$node['obj']->exampaper_id.'" ></iframe>';
+                }else {
+//                    $node['scan_sign'] = '';
+//                    $node['scan_src'] =  '';
+                    $scan_html = '<center><p>暂无资源</p></center>';
+                }
+                $node['scan_html'] = $scan_html;
+                if($node['obj']->type > 0) {
+                    switch ($node['obj']->type) {
+                        case 1:
+                            $node['type_name'] = '预习';
+                            break;
+                        case 2:
+                            $node['type_name'] = '作业';
+                            break;
+                        case 3:
+                            $node['type_name'] = '评分';
+                            break;
+                        case 4:
+                            $node['type_name'] = '路演';
+                            break;
+                        case 6:
+                            $node['type_name'] = '问卷调查';
+                            break;
+                        default:
+                            break;
+                    }
+                }
+                if(!$node['obj']->type && $node['obj']->info_id && $node['obj']->info) {
+                    $node['type_name'] = '课件';
+                }
+
+            }else {
+                unset($node);
+            }
+        }
+
+        // 调用互动代码
+//         //$oQa = new OnlineQaController();
+//         //$oQaDatas = $oQa->getRun(\Auth::user(), $squad_id, $oPlanStruct->module_id, 1);
+//        $oQaDatas = DB::table('node_qas')->where('module_id', $oPlanStruct->module_id)
+//                ->where('squad_id', $squad_id)
+//                ->where('type',1)
+//                ->orderBy('id','desc');
+//
+//
+//        $num['a'] = $oQaDatas->count();
+//        $oQaDatas=$oQaDatas->paginate(4);
+//        $num['b'] = $oQaDatas->count();
+//
+//        foreach ($oQaDatas as $k=>$v) {
+//			$v->user = DB::table('users')->where('id', $v->user_id)->first();
+//			if($v->user){
+//				$v->user->avatar = getAvatar($v->user->avatar);
+//				$v->imgs = json_decode($v->imgs);
+//			 }else{
+//				unset($oQaDatas[$k]);
+//			 }
+//        }
+        $oQaDatas = [];
+        $num=[];
+
+
+		if (view()->exists(session('mode').'.teacherplat.squad.screen-v2')){
+			return View(session('mode').'.teacherplat.squad.screen-v2', compact('oModule','oCell','cells','oUser','modules','nodes','oSquad','oQaDatas','num','squad_id', 'planStruct_id'));
+		}else{
+			return View('default.teacherplat.squad.screen-v2', compact('oModule','oCell','cells','oUser','modules','nodes','oSquad','oQaDatas','num'));
+		}
+    }
+
+    public function bind(Request $request){
+        $data = $request->only('squad_id','planStruct_id','client_id');
+
+        $uid      = Auth::user()->id;
+        $client_id = $data['client_id'];
+        $group = PlanImGroup::where('squad_id', $data['squad_id'])->where('plan_id',$data['planStruct_id'])->first();
+
+        if($group){
+            $group_id = $group->id;
+        }else{
+
+            $oPlanImGroup = PlanImGroup::create([
+                'squad_id' => $data['squad_id'],
+                'plan_id' => $data['planStruct_id'],
+                'master_id' => $uid,
+                'count' => 1,
+            ]);
+            $group_id = $oPlanImGroup->id;
+        }
+
+        Gateway::$registerAddress = '127.0.0.1:1236';
+        Gateway::bindUid($client_id, $uid);
+        Gateway::joinGroup($client_id, $group_id);
+        
+        $msg = ['squad_id'=> $data['squad_id'] , 'planStruct_id'=>$data['planStruct_id'] , 'client_id'=>$client_id,'group'=>$group_id];
+        return response()->json($msg)->setStatusCode(200);
+
+    }
+
+	public function getCommentList($planStruct_id,$squad_id,$qa_id)
+	{
+//		$a = 0;
+//		$oPlanStruct = PlanStruct::find($planStruct_id);
+//		do{
+//
+//			$oQaDatas = DB::table('node_qas')->where('module_id', $oPlanStruct->module_id)
+//                ->where('squad_id', $squad_id)
+//                ->where('type',1)
+//                ->orderBy('id','desc')
+//				->first();
+//				if(!$oQaDatas){
+//					$id=0;
+//				}else{
+//					$id = $oQaDatas->id;
+//				}
+//
+//		}while($id<=$qa_id);
+//		$a = 1;
+//		return $a;
+//
+		
+	}
+
+    // public function screen_v1($squad_id){
+    //     $oUser = \Auth::user();
+    //     $cells = $modules = $nodes = [];
+    //     $oSquad = $oNode = $node_id = $cell_id = $module_id = '';
+
+    //     \Request::has('cell_id') && $cell_id = \Request::input('cell_id');
+    //     \Request::has('module_id') && $module_id = \Request::input('module_id');
+
+    //     // 班级数据
+    //     $oSquad = Squad::whereId($squad_id)->with('plan')->first();
+    //     if($oSquad && $oSquad->plan) {
+    //         // 方案数据
+    //         $oSquad->plan->commonHeaderV2($cell_id, $module_id, $cells,$modules);
+    //         if(!$modules) {
+    //             return redirect('error')->with(['msg'=>'此单元不存在模块！', 'href'=>app(UrlGenerator::class)->previous()]);
+    //         }
+    //         if(!$module_id) {
+    //             return redirect('error')->with(['msg'=>'该方案此部分模块数据已被删除，请联系相关人员进行替换', 'href'=>app(UrlGenerator::class)->previous()]);
+    //         }
+    //         // nodes
+    //         PlanStruct::where('plan_id', $oSquad->plan->id)
+    //             ->where('cell_id', $cell_id)
+    //             ->where('module_id', $module_id)
+    //             ->where('node_id','>',0)
+    //             ->orderBy('node_ord','asc')
+    //             ->groupBy('node_id')
+    //             ->get(['node_id'])
+    //             ->each(function($PlanStruct, $item) use (&$nodes, $squad_id) {
+    //                 $oNode = Node::whereId($PlanStruct->node_id)->first();
+    //                 if($oNode) {
+    //                     $nodes[$item]['obj'] = $oNode;
+    //                     if($oNode->info_id && $oNode->info) {
+    //                         $scan_html = '<iframe width="100%" height="100%" class="iframe-info" id="iframe-info-'.$oNode->info->sign.'" scrolling="no" frameborder="0" src="/preview/info/'.$oNode->info->sign.'"></iframe>';
+    //                     }elseif($oNode->exampaper) {
+    //                         $scan_html = '<iframe width="100%" height="100%" class="iframe-exampaper" id="iframe-exampaper-'.$oNode->exampaper_id.'" scrolling="no" frameborder="0" src="/resource/exampaper/view/'.$oNode->exampaper_id.'" ></iframe>';
+    //                     } else {
+    //                         $scan_html = '<center><p>暂无资源</p></center>';
+    //                     }
+    //                     $nodes[$item]['scan_html'] = $scan_html;
+    //                     if($oNode->type > 0) {
+    //                         switch ($oNode->type) {
+    //                             case 1:
+    //                                 $nodes[$item]['type_name'] = '预习';
+    //                                 break;
+    //                             case 2:
+    //                                 $nodes[$item]['type_name'] = '作业';
+    //                                 break;
+    //                             case 3:
+    //                                 $nodes[$item]['type_name'] = '评分';
+    //                                 break;
+    //                             case 4:
+    //                                 $nodes[$item]['type_name'] = '路演';
+    //                                 break;
+    //                             default:
+    //                                 break;
+    //                         }
+    //                     }
+    //                     if(!$oNode->type && $oNode->info_id && $oNode->info) {
+    //                         $nodes[$item]['type_name'] = '课件';
+    //                     }
+
+
+    //                 }
+
+    //             });
+    //         if(!$nodes) {
+    //             $info = '该模块没有环节！';
+    //             return view('info', compact('info'));
+    //         }
+    //         // 调用互动代码
+    //         $oQa = new OnlineQaController();
+    //         $oQaDatas = $oQa->getRunV2(\Auth::user(), $squad_id, $module_id, 1);
+    //         return view('teacherplat.squad.screen-v2', compact('cells','oUser','modules','nodes','cell_id','module_id','oSquad','oQaDatas'));
+    //     }
+
+    //     return redirect('error')->with(['msg'=>'没有给该班绑定教学方案，请去班级管理页面进行设置！', 'href'=>app(UrlGenerator::class)->previous()]);
+
+    // }
+
+
+
+
+    /**
+     * 给班级发送通知
+     * @param $squad_id
+     */
+   public function notify(Request $request,$squad_id){
+       $type=$request->input('type');
+       $url='';
+       if($type==2 || $type==4){
+           $template_id=$request->input('template_id');
+           $template=NotifyTemplate::where(['id'=>$template_id])->first();
+           if ($template->isEmpty()) {
+               return back()->withInput()->withErrors(['custom-msg' => '模版不存在',]);
+           }
+           $fields=$template['fields'];
+           $fields_arr=explode(',',$fields);
+           $fill_array=array();
+           foreach($fields_arr as $val){
+               if($request->input($val)==''){
+                   return back()->withInput()->withErrors(['custom-msg' => $val.'字段不能为空',]);
+               }
+               $fill_array[$val]=$request->input($val);
+           }
+           if($type==4){
+               $url= $request->input('url');
+           }
+           $content=json_encode($fill_array);
+       }
+       else{
+           $template_id=0;
+           $content=$request->input('content');
+       }
+       // 1 系统消息 2短信 3 email 4 微信
+       $send_method=$request->input('type');
+       $oNotify = Notify::create([
+           'title' => $request->input('title'),
+           'send_time' => $request->input('send_time'),
+           'template_id' => $template_id,
+           'send_method' => $send_method,
+           'content' => $content,
+           'url' => $url,
+           'user_id' => $this->user_id,
+       ]);
+       // 后期去掉
+       $oNotify->id = Notify::where('user_id', $this->user_id)->orderBy('id','desc')->take(1)->value('id');
+       $oNotify->squads()->attach($squad_id);
+       return back()->withInput()->withErrors(['msg' => '发送通知成功',]);
+   }
+
+    /**
+     * Update the specified resource in storage.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  int  $id
+     * @return \Illuminate\Http\Response
+     */
+    public function update(Request $request, $id)
+    {
+        $oSquad = Squad::where(['id'=>$id,'teacher_id'=>$this->teacher_id])->first();
+        //判断
+        $jurisdiction = DB::table('squad_structs')->where(['squad_id'=>$id,'struct_id'=>$this->teacher_id,'type'=>2])->first();
+        if($jurisdiction != null){
+        $oSquad = Squad::where(['id'=>$jurisdiction->squad_id,'school_id'=>$this->school_id])->first();
+        }
+        //判断
+        if($oSquad) {
+            $oSquad->acdemy_id = $request->input('acdemy_id',0);
+            $oSquad->dept_id = $request->input('dept_id',0);
+            $oSquad->major_id = $request->input('major_id',0);
+            $oSquad->income_year = $request->input('income_year');
+            $oSquad->name = $request->input('name');
+            $oSquad->address = $request->input('address');
+            if ($request->hasFile('teach_calendar')) {
+            if ($request->file('teach_calendar')->isValid()){
+                $file = $request->file('teach_calendar');
+                $file_name = time().str_random(6).$file->getClientOriginalName();
+                \Storage::disk('oss')->put($file_name, file_get_contents($file->getRealPath()));
+                if(\Storage::disk('oss')->exists($file_name)) {
+                    $oSquad->teach_calendar = $file_name;
+                } else {
+                    return back()->withInput()->withErrors(['msg' => '教学日历上传失败',]);
+                }
+            } else {
+                return back()->withInput()->withErrors(['msg' => '教学日历上传失败',]);
+            }
+        }
+            $oSquad->save();
+            return back()->withInput()->withErrors(['msg' => '修改成功',]);
+        } else {
+            $msg = [
+                "msg"=> ["参数错误，非法操作"],
+            ];
+            return back()->withInput()->withErrors($msg);
+        }
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     *
+     * @param  int  $id
+     * @return \Illuminate\Http\Response
+     */
+    public function destroy($id)
+    {
+        //
+    } 
+	public function page_ajax($squad_id, $planStruct_id)
+    {
+        //
+		$oPlanStruct = PlanStruct::find($planStruct_id);
+		$oQaDatas = \DB::table('node_qas')->where('module_id', $oPlanStruct->module_id)
+                ->where('squad_id', $squad_id)
+                ->where('type',1)
+                ->orderBy('id','desc')
+                ->limit(20);
+        $oQaDatas=$oQaDatas->get();
+        foreach ($oQaDatas as $v) {
+             $v->user = DB::table('users')->where('id', $v->user_id)->first();
+			 $v->imgs = json_decode($v->imgs);
+        }//dd($oQaDatas);
+		return json_encode($oQaDatas);
+    }
+
+    public function student_ercode($group_id){
+        //120分之内是否有带标识的唯一码，这里将原来的squad_id（班级id）改为group_id（群组id）
+        $oObj = \DB::table('unique_code')->where('squad_id',$group_id)->where('type','1')->where('time','>',strtotime( '-120 Minute'))->first();
+        $type = 'no';
+        if($oObj){
+            $type = 'yes';
+        }
+        $oUser = \Auth::user();
+        $group = PlanImGroup::where('id',$group_id)->first();
+
+        if ($group->master_id != $oUser->id){
+            return response()->json(array('oSquad_name'=>'你不是该教师','squad_id'=>null));
+        }
+        $oSquad_name = Squad::whereId($group->squad_id)->value('name');
+        return View('default.teacherplat.squad.qrcode', compact('type','oSquad_name','squad_id'));
+//        return response()->json(array('type'=>$type,'oSquad_name'=>$oSquad_name,'squad_id'=>$group->squad_id));
+    }
+
+    public function ajax_ercode(Request $request,$squad_id,$group_id){
+        //这里将原来的squad_id（班级id）改为group_id（群组id）
+        $data['type'] = 0;
+        $oObj = \DB::table('unique_code')->where('squad_id',$group_id)->where('type','1')->where('time','>',strtotime( '-120 Minute'))->first();
+        $squad_id = PlanImGroup::where('id',$group_id)->value('squad_id');
+        if(!$oObj){
+            if($request->type){	
+                $data['type'] = 1;
+                //发送微信通知
+                $start_date = date("Y-m-d H:i:s");
+                $end_date = date("Y-m-d H:i:s",strtotime( '120 Minute'));
+				$url = route('student_scan');
+                WechatNotifyController::student_sign(
+                $squad_id,
+                '',
+                '',
+                $url,
+                $start_date,
+                '',
+                '',
+                $start_date,
+                $end_date,
+                '5分'
+            );
+            }else{
+                return;
+            }	
+        
+            
+        }
+        
+        $code  = sprintf('%02d', rand(0, 99)). substr(md5(time()), -5) . substr(md5(microtime()), 2, 5);
+        $url = route('student_sign',["{$code}"]);
+        $data['code'] = $code;
+        $data['time'] = time();
+        $data['squad_id'] = $group_id;
+        \DB::table('unique_code')->insert($data);
+        $qrcode = new BaconQrCodeGenerator;	
+        $ercode = $qrcode->size(500)->generate($url);
+        return $ercode;
+       
+    }
+    //选择发送人群
+    public function ajax_vote(Request $request,$squad_id){
+        $oObj = \DB::table('student')->where('squad_id',$squad_id)->pluck('name'); //根据班级查询班级的人
+        $data['type'] = 0;
+        if(!$oObj){
+            if($request->type){ 
+                $data['type'] = 1;
+                //发送微信通知
+                $start_date = date("Y-m-d H:i:s");
+                $end_date = date("Y-m-d H:i:s",strtotime( '120 Minute'));
+                WechatNotifyController::student_sign(
+                $squad_id,
+                '',
+                '',
+                'url',
+                $start_date,
+                '',
+                '',
+                $start_date,
+                $end_date,
+                '5分'
+            );
+            }else{
+                return;
+            }   
+        
+            
+        }
+       
+    }
+    //签到列表
+    public function sign_list($group_id){
+
+        $oUser = \Auth::user();
+        $oObj = PlanImGroup::where('id',$group_id)->first();
+        if ($oObj->master_id != $oUser->id){
+            return response()->json(array('msg'=>'你不是该教师','state'=>false));
+        }
+        $key = "group_sign:{$oObj->id}";
+        $s = Redis::exists($key);
+        if(!$s){
+            return response()->json(array('msg'=>'no sign data','state'=>true,'data'=>null,'count'=>null));
+        }
+        $list = json_decode(Redis::get($key),true);
+//        var_dump($list);die;
+        $data = '';
+        $count = count($list) ?? "0";
+        foreach ($list as $k  => $v){
+
+           $user =  User::whereId($k)->first();
+            $data .= "<li><img src=\"".getAvatar($user->avatar)."\" alt=\"\" /><div class=\"w-wname-time\"><span>学生：".$user->name."</span><span>签到时间：".date('H:i:s',$v)."</span><i class=\"fa fa-play\"></i></div></li>";
+        }
+        return response()->json(array('msg'=>'ok','state'=>true,'data'=>$data,'count'=>$count));
+
+        return;
+        $codelist = \DB::table('unique_code')->where('squad_id',$squad_id)->where('type','1')->where('time','>',strtotime( '-120 Minute'))->first();
+        if($codelist){
+            $oObj = \DB::table('sign_log')->where('squad_id',$squad_id)->where('time','>',$codelist->time);
+            $students_id = $oObj->pluck('student_id');
+            $users_id = Student::whereIn('id',$students_id)->pluck('user_id');
+            $num = $oObj->count();
+            $oUser = user::whereIn('id',$users_id)->get(); 
+            $data = "<h3/>已签到：{$num} 人<h3>";
+            foreach($oUser as $user)
+            {
+                $avatar=getAvatar($user->avatar);
+                $data .="<div class='student-data'><img class='student-avatar' src=\"{$avatar}\"  onerror=\"javascript:this.src='/images/default-avatar.png';\"/><br/><b>{$user->name}</b></div>";
+                //
+            }
+            return $data;
+        }else{
+            return;
+        }   
+    }
+    public function send_vote($squad_id)
+    {
+        $oUser = \Auth::user();
+        $oObjs = Ext_wj_examp::where('user_id',$oUser->id)->get();
+        if (view()->exists(session('mode').'.teacherplat.squad.vote')){
+                return View(session('mode').'.teacherplat.squad.vote', compact('oObjs'));
+            }else{
+                return View('default.teacherplat.squad.vote', compact('oObjs'));
+        }
+    }
+    //随机点名
+    public function roll_call($squad_id)
+    {
+        $oObj = \DB::table('unique_code')->where('time','>',strtotime('-120',time()))->where('squad_id',$squad_id)->where('type','1')->first();
+		$students = [];
+        if($oObj){
+             $oObjs = \DB::table('sign_log')->where('squad_id',$squad_id)->where('time','>',$oObj->time)->pluck('student_id');
+              $student = Student::whereIn('id',$oObjs)->get()->toArray();
+         }else{
+            //$oObjs = Student::where('squad_id',$squad_id)->get();
+			$student_ids = SquadStruct::where('squad_id',$squad_id)->where('type',1)->pluck('struct_id');
+            $student = Student::whereIn('id',$student_ids)->get()->toArray();
+           
+         }
+            $student1 = Group::where('squad_id',$squad_id)->where('type',0)->get();
+            $student2 = Group::where('squad_id',$squad_id)->where('type',1)->get();
+			if(count($student)>100){
+				$students = array_rand($student,100);
+			}else{
+				if($student){
+					$students = array_rand($student,count($student));
+				}	
+			}
+        if(view()->exists(session('mode').'.teacherplat.squad.roll')){
+                return View(session('mode').'.teacherplat.squad.roll', compact('students','student','student1','student2','squad_id'));
+            }else{
+                return View('default.teacherplat.squad.roll', compact('students','student','student1','student2','squad_id'));
+        }
+    }
+
+    //奖励分值
+    public function reward($squad_id,$id,$type='')
+    {
+        $oObjs = StudentFinalScore::where('student_id',$id)->where('type',7)->first();
+        if(!$oObjs){
+            $oObjs = new StudentFinalScore;
+            $oObjs->student_id = $id;
+            $oObjs->score = 0;
+            $oObjs->squad_id = $squad_id;
+            $oObjs->type = 7;
+            $oObjs->save();
+        }
+        $oObjs->name = Student::where('id',$id)->first()->name;
+        if (view()->exists(session('mode').'.teacherplat.squad.reward')){
+                return View('default.teacherplat.squad.reward',compact('oObjs','squad_id'));
+            }else{
+                return View('default.teacherplat.squad.reward',compact('oObjs','squad_id'));
+        }
+    }
+    public function save(Request $request,$squad_id,$id)
+    {
+        if($request->type == 6){
+            $score = $request->stype;
+        }else{
+            $score = $request->type;
+        }
+        $oObjs = StudentFinalScore::where('student_id',$id)->where('type',7)->first();
+        $oObjs->score += $score;
+        $oObjs->save();
+        $Point = new StudentPoint;
+        $Point->score = $score;
+        $Point->student_id = $id;
+        $Point->type = 11;
+        $Point->brief= '课堂点名';
+        $Point->desc= '上课回答问题得分';
+        $Point->save();
+        $url = route('student_score',["{$squad_id}"]);
+                //发送微信通知
+                $start_date = date("Y-m-d H:i:s");
+                $end_date = date("Y-m-d H:i:s",strtotime( '120 Minute'));
+                WechatNotifyController::student_reward(
+                    '',
+                    '',
+                    '',
+                    $url,
+                    $start_date,
+                    '',
+                    '',
+                    $start_date,
+                    $end_date,
+                    '5分'
+                );
+         return response()->json("操作成功");
+    }
+    public function wj_result($squad_id,$module_id,$node_id)
+    { 
+		$oObj = [];
+		$wj_examp = [];
+		$page = '';
+        $sends = \DB::table('Ext_wj_send')->where('squad_id',$squad_id)->where('module_id',$module_id)->where('node_id',$node_id)->first();
+		$ws_id = 0;
+		if($sends){
+			$ws_id = $sends->id;
+			$wj_id = $sends->wj_id;
+			$wj_questions = \DB::table('Ext_wj_questions')->where('wj_id',$wj_id)->paginate(1);
+			$wj_examp = \DB::table('Ext_wj_examps')->where('id',$wj_id)->first();
+			$type = ['单选','多选'];
+			
+			foreach($wj_questions as $k=>$vquestion)
+			{
+				$oObj[$k]['wq_id'] = $vquestion->id;
+				$oObj[$k]['title'] = $vquestion->title;
+				$oObj[$k]['type'] = $type[$vquestion->type];
+				$oObj[$k]['answer'] = json_decode($vquestion->answer);
+				$results =  \DB::table('Ext_wj_results')->where('ws_id',$sends->id)->where('wq_id',$vquestion->id);
+				$oObj[$k]['total_people'] = $results->count();
+				$oObj[$k]['total'] = 0;
+				$results = $results->get();
+				foreach($results as $vresult)
+				{
+					$vresult->wq_answer = json_decode($vresult->wq_answer);
+					if(!$vquestion->type){
+						if(!empty($oObj[$k]['results'][$vresult->wq_answer])){
+							$oObj[$k]['results'][$vresult->wq_answer]+=1;
+						}else{
+							$oObj[$k]['results'][$vresult->wq_answer] = 1;
+						}
+						$oObj[$k]['total']+=1;
+
+                    }else{
+						foreach($vresult->wq_answer as $wq_answer)
+						{
+							if(!empty($oObj[$k]['results'][$wq_answer])){
+								$oObj[$k]['results'][$wq_answer]+=1;
+							}else{
+								$oObj[$k]['results'][$wq_answer] = 1;
+							}
+							$oObj[$k]['total']+=1;
+						}
+					}
+                }
+            }
+
+			$page = $wj_questions->links();
+
+		}
+        if (view()->exists(session('mode').'.teacherplat.squad.qrcode')){
+			return View(session('mode').'.teacherplat.squad.wj_result', compact('oObj','wj_examp','page','ws_id'));
+		}else{
+			return View('default.teacherplat.squad.wj_result', compact('oObj','wj_examp','page','ws_id'));
+		} 
+    }
+
+    //问卷结果
+    public function getRollcall($ws_id,$wq_id,$count)
+    {
+        $a = 0;
+        do{
+            $oQaDatas = \DB::table('Ext_wj_results')->where('ws_id', $ws_id)
+                ->where('wq_id',$wq_id)
+                ->count();
+              
+        }while($count<=$oQaDatas);
+        $a = 1;
+        return $a;   
+    }
+}
