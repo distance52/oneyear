@@ -1,0 +1,915 @@
+<?php
+
+use Illuminate\Support\Str;
+use Illuminate\Support\Arr;
+use app\common\services\PermissionService;
+use app\common\helpers\Url;
+use Ixudra\Curl\Facades\Curl;
+use App\common\services\Oss;
+
+function yz_tpl_ueditor($id, $value = '', $options = array())
+{
+    $s = '';
+    if (!defined('TPL_INIT_UEDITOR')) {
+        $s .= '<script type="text/javascript" src="../addons/yun_shop/app/common/components/ueditor/ueditor.config.js"></script><script type="text/javascript" src="../addons/yun_shop/app/common/components/ueditor/ueditor.all.min.js"></script><script type="text/javascript" src="../addons/yun_shop/app/common/components/ueditor/lang/zh-cn/zh-cn.js"></script><link href="/web/resource/components/webuploader/webuploader.css" rel="stylesheet"><link href="/web/resource/components/webuploader/style.css" rel="stylesheet">';
+    }
+    $options['height'] = empty($options['height']) ? 200 : $options['height'];
+    $s .= !empty($id) ? "<textarea id=\"{$id}\" name=\"{$id}\" type=\"text/plain\" style=\"height:{$options['height']}px;\">{$value}</textarea>" : '';
+    $s .= "
+	<script type=\"text/javascript\">
+			var ueditoroption = {
+				'autoClearinitialContent' : false,
+				'toolbars' : [['fullscreen', 'source', 'preview', '|', 'bold', 'italic', 'underline', 'strikethrough', 'forecolor', 'backcolor', '|',
+					'justifyleft', 'justifycenter', 'justifyright', '|', 'insertorderedlist', 'insertunorderedlist', 'blockquote', 'emotion',
+					'link', 'removeformat', '|', 'rowspacingtop', 'rowspacingbottom', 'lineheight','indent', 'paragraph', 'fontsize', '|',
+					'inserttable', 'deletetable', 'insertparagraphbeforetable', 'insertrow', 'deleterow', 'insertcol', 'deletecol',
+					'mergecells', 'mergeright', 'mergedown', 'splittocells', 'splittorows', 'splittocols', '|', 'anchor', 'map', 'print', 'drafts']],
+				'elementPathEnabled' : false,
+				'initialFrameHeight': {$options['height']},
+				'focus' : false,
+				'maximumWords' : 9999999999999
+			};
+			var opts = {
+				type :'image',
+				direct : false,
+				multi : true,
+				tabs : {
+					'upload' : 'active',
+					'browser' : '',
+					'crawler' : ''
+				},
+				path : '',
+				dest_dir : '',
+				global : false,
+				thumb : false,
+				width : 0
+			};
+			UE.registerUI('myinsertimage',function(editor,uiName){
+				editor.registerCommand(uiName, {
+					execCommand:function(){
+						require(['fileUploader'], function(uploader){
+							uploader.show(function(imgs){
+								if (imgs.length == 0) {
+									return;
+								} else if (imgs.length == 1) {
+									editor.execCommand('insertimage', {
+										'src' : imgs[0]['url'],
+										'_src' : imgs[0]['attachment'],
+										'width' : '100%',
+										'alt' : imgs[0].filename
+									});
+								} else {
+									var imglist = [];
+									for (i in imgs) {
+										imglist.push({
+											'src' : imgs[i]['url'],
+											'_src' : imgs[i]['attachment'],
+											'width' : '100%',
+											'alt' : imgs[i].filename
+										});
+									}
+									editor.execCommand('insertimage', imglist);
+								}
+							}, opts);
+						});
+					}
+				});
+				var btn = new UE.ui.Button({
+					name: '插入图片',
+					title: '插入图片',
+					cssRules :'background-position: -726px -77px',
+					onclick:function () {
+						editor.execCommand(uiName);
+					}
+				});
+				editor.addListener('selectionchange', function () {
+					var state = editor.queryCommandState(uiName);
+					if (state == -1) {
+						btn.setDisabled(true);
+						btn.setChecked(false);
+					} else {
+						btn.setDisabled(false);
+						btn.setChecked(state);
+					}
+				});
+				return btn;
+			}, 19);
+			UE.registerUI('myinsertvideo',function(editor,uiName){
+    editor.registerCommand(uiName, {
+        execCommand:function(){
+            require(['../addons/yun_shop/static/js/fileUploader.min.js'],
+                function(uploader){
+                    uploader.show(function(video){
+                        if (!video) {
+                            return;
+                        } else {
+                            var videoType = video.isRemote ? 'iframe' : 'video';
+                            editor.execCommand('insertvideo', {
+                                'url' : video.url,
+                                'width' : 300,
+                                'height' : 200
+                            }, videoType);
+                        }
+                    }, {type:'video'});
+                }
+            );
+        }
+    });
+    var btn = new UE.ui.Button({
+        name: '插入视频',
+        title: '插入视频',
+        cssRules :'background-position: -320px -20px',
+        onclick:function () {
+            editor.execCommand(uiName);
+        }
+    });
+    editor.addListener('selectionchange', function () {
+        var state = editor.queryCommandState(uiName);
+        if (state == -1) {
+            btn.setDisabled(true);
+            btn.setChecked(false);
+        } else {
+            btn.setDisabled(false);
+            btn.setChecked(state);
+        }
+    });
+    return btn;
+}, 20);
+			".(!empty($id) ? "
+				$(function(){
+					var ue = UE.getEditor('{$id}', ueditoroption);
+					$('#{$id}').data('editor', ue);
+					$('#{$id}').parents('form').submit(function() {
+						if (ue.queryCommandState('source')) {
+							ue.execCommand('source');
+						}
+					});
+				});" : '')."
+	</script>";
+    return $s;
+}
+
+
+if (!function_exists("html_images")) {
+
+    function html_images($detail = '')
+    {
+        $detail = htmlspecialchars_decode($detail);
+        preg_match_all("/<img.*?src=[\'| \"](.*?(?:[\.gif|\.jpg|\.png|\.jpeg]?))[\'|\"].*?[\/]?>/", $detail, $imgs);
+        $images = array();
+        if (isset($imgs[1])) {
+            foreach ($imgs[1] as $img) {
+                $im = array(
+                    "old" => $img,
+                    "new" => save_media($img)
+                );
+                $images[] = $im;
+            }
+        }
+        foreach ($images as $img) {
+            $detail = str_replace($img['old'], $img['new'], $detail);
+        }
+        return $detail;
+    }
+}
+if (!function_exists("xml_to_array")) {
+    function xml_to_array($xml)
+    {
+        $reg = "/<(\w+)[^>]*>([\\x00-\\xFF]*)<\\/\\1>/";
+        if (preg_match_all($reg, $xml, $matches)) {
+            $count = count($matches[0]);
+            for ($i = 0; $i < $count; $i++) {
+                $subxml = $matches[2][$i];
+                $key = $matches[1][$i];
+                if (preg_match($reg, $subxml)) {
+                    $arr[$key] = xml_to_array($subxml);
+                } else {
+                    $arr[$key] = $subxml;
+                }
+            }
+        }
+        return $arr;
+    }
+}
+
+
+if (!function_exists("tomedia")) {
+    /**
+     * 获取附件的HTTP绝对路径
+     * @param string $src 附件地址
+     * @param bool $local_path 是否直接返回本地图片路径
+     * @return string
+     */
+    function tomedia($src, $local_path = false)
+    {
+        if (empty($src)) {
+            return '';
+        }
+        if (strexists($src, 'addons/')) {
+            return request()->getSchemeAndHttpHost() . substr($src, strpos($src, 'addons/'));
+        }
+        //如果远程地址中包含本地host也检测是否远程图片
+        if (strexists($src, request()->getSchemeAndHttpHost()) && !strexists($src, '/addons/')) {
+            $urls = parse_url($src);
+            $src = $t = substr($urls['path'], strpos($urls['path'], 'images'));
+        }
+        $t = strtolower($src);
+        if (strexists($t, 'http://') || strexists($t, 'https://') || substr($t, 0, 2) == '//') {
+            return $src;
+        }
+
+        if ($local_path || empty(YunShop::app()->setting['remote']['type']) || file_exists(base_path('../../') . '/' . YunShop::app()->config['upload']['attachdir'] . '/' . $src)) {
+            $src = request()->getSchemeAndHttpHost() . '/attachment/' . $src;
+        } else {
+            $src = YunShop::app()->attachurl_remote . $src;
+        }
+        return $src;
+    }
+}
+
+function yz_tomedia($src, $local_path = false)
+{
+    $setting = \setting_load();
+
+    if (empty($src)) {
+        return '';
+    }
+    if (strexists($src, 'addons/')) {
+        return request()->getSchemeAndHttpHost() . substr($src, strpos($src, '/addons/'));
+    }
+    //如果远程地址中包含本地host也检测是否远程图片
+    if (strexists($src, request()->getSchemeAndHttpHost()) && !strexists($src, '/addons/')) {
+        $urls = parse_url($src);
+        $src = $t = substr($urls['path'], strpos($urls['path'], 'images'));
+    }
+    $t = strtolower($src);
+    if (strexists($t, 'http://') || strexists($t, 'https://') || substr($t, 0, 2) == '//') {
+        return $src;
+    }
+
+    if ($local_path || empty($setting['remote']['type']) || file_exists(base_path('../../') . '/' . YunShop::app()->config['upload']['attachdir'] . '/' . $src)) {
+        $src = request()->getSchemeAndHttpHost() . '/attachment/' . $src;
+    } else {
+        if ($setting['remote']['type'] == 1) {
+            $attachurl_remote = $setting['remote']['ftp']['url'] . '/';
+        } elseif ($setting['remote']['type'] == 2) {
+            $attachurl_remote = $setting['remote']['alioss']['url'].'/';
+        } elseif ($setting['remote']['type'] == 3) {
+            $attachurl_remote = $setting['remote']['qiniu']['url'].'/';
+        } elseif ($setting['remote']['type'] == 4) {
+            $attachurl_remote = $setting['remote']['cos']['url'].'/';
+        }
+
+        $src = $attachurl_remote . $src;
+    }
+    return $src;
+}
+
+if (!function_exists("replace_yunshop")) {
+    function replace_yunshop($url)
+    {
+        $moduleName = \Config::get('app.module_name');
+        return str_replace(DIRECTORY_SEPARATOR . "addons" . DIRECTORY_SEPARATOR . $moduleName, "", $url);
+    }
+}
+
+if (!function_exists("strexists")) {
+    /**
+     * 判断字符串是否包含子串
+     * @param string $string 在该字符串中进行查找
+     * @param string $find 需要查找的字符串
+     * @return boolean
+     */
+    function strexists($string, $find)
+    {
+        return !(strpos($string, $find) === false);
+    }
+}
+if (!function_exists("set_medias")) {
+    function set_medias($list = array(), $fields = null)
+    {
+        if (empty($fields)) {
+            foreach ($list as &$row) {
+                $row = tomedia($row);
+            }
+            return $list;
+        }
+        if (!is_array($fields)) {
+            $fields = explode(',', $fields);
+        }
+        if (is_array2($list)) {
+            foreach ($list as $key => &$value) {
+                foreach ($fields as $field) {
+                    if (isset($list[$field])) {
+                        $list[$field] = tomedia($list[$field]);
+                    }
+                    if (is_array($value) && isset($value[$field])) {
+                        $value[$field] = tomedia($value[$field]);
+                    }
+                }
+            }
+            return $list;
+        } else {
+            foreach ($fields as $field) {
+                if (isset($list[$field])) {
+                    $list[$field] = tomedia($list[$field]);
+                }
+            }
+            return $list;
+        }
+    }
+}
+if (!function_exists('is_array2')) {
+    function is_array2($array)
+    {
+        if (is_array($array)) {
+            foreach ($array as $k => $v) {
+                return is_array($v);
+            }
+            return false;
+        }
+        return false;
+    }
+}
+
+if (!function_exists("show_json")) {
+    function show_json($status = 1, $return = null, $variable = null)
+    {
+        $ret = array(
+            'status' => $status
+        );
+        if ($return) {
+            $ret['result'] = $return;
+        }
+
+        if (Yunshop::isApi()) {
+            return array(
+                'status' => $status,
+                'variable' => $variable,
+                'json' => $return,
+            );
+        }
+        die(json_encode($ret));
+    }
+}
+if (!function_exists("array_column")) {
+
+    function array_column($input = null, $columnKey = null, $indexKey = null)
+    {
+        // Using func_get_args() in order to check for proper number of
+        // parameters and trigger errors exactly as the built-in array_column()
+        // does in PHP 5.5.
+        $argc = func_num_args();
+        $params = func_get_args();
+        if ($argc < 2) {
+            trigger_error("array_column() expects at least 2 parameters, {$argc} given", E_USER_WARNING);
+            return null;
+        }
+        if (!is_array($params[0])) {
+            trigger_error(
+                'array_column() expects parameter 1 to be array, ' . gettype($params[0]) . ' given',
+                E_USER_WARNING
+            );
+            return null;
+        }
+        if (!is_int($params[1])
+            && !is_float($params[1])
+            && !is_string($params[1])
+            && $params[1] !== null
+            && !(is_object($params[1]) && method_exists($params[1], '__toString'))
+        ) {
+            trigger_error('array_column(): The column key should be either a string or an integer', E_USER_WARNING);
+            return false;
+        }
+        if (isset($params[2])
+            && !is_int($params[2])
+            && !is_float($params[2])
+            && !is_string($params[2])
+            && !(is_object($params[2]) && method_exists($params[2], '__toString'))
+        ) {
+            trigger_error('array_column(): The index key should be either a string or an integer', E_USER_WARNING);
+            return false;
+        }
+        $paramsInput = $params[0];
+        $paramsColumnKey = ($params[1] !== null) ? (string)$params[1] : null;
+        $paramsIndexKey = null;
+        if (isset($params[2])) {
+            if (is_float($params[2]) || is_int($params[2])) {
+                $paramsIndexKey = (int)$params[2];
+            } else {
+                $paramsIndexKey = (string)$params[2];
+            }
+        }
+        $resultArray = array();
+        foreach ($paramsInput as $row) {
+            $key = $value = null;
+            $keySet = $valueSet = false;
+            if ($paramsIndexKey !== null && array_key_exists($paramsIndexKey, $row)) {
+                $keySet = true;
+                $key = (string)$row[$paramsIndexKey];
+            }
+            if ($paramsColumnKey === null) {
+                $valueSet = true;
+                $value = $row;
+            } elseif (is_array($row) && array_key_exists($paramsColumnKey, $row)) {
+                $valueSet = true;
+                $value = $row[$paramsColumnKey];
+            }
+            if ($valueSet) {
+                if ($keySet) {
+                    $resultArray[$key] = $value;
+                } else {
+                    $resultArray[] = $value;
+                }
+            }
+        }
+        return $resultArray;
+    }
+}
+
+if (!function_exists('shop_template_compile')) {
+    function shop_template_compile($from, $to, $inmodule = false)
+    {
+        $path = dirname($to);
+        if (!is_dir($path)) {
+            load()->func('file');
+            mkdirs($path);
+        }
+        $content = shop_template_parse(file_get_contents($from), $inmodule);
+
+        file_put_contents($to, $content);
+    }
+}
+
+if (!function_exists('shop_template_parse')) {
+    function shop_template_parse($str, $inmodule = false)
+    {
+        $str = template_parse($str, $inmodule);
+        $str = preg_replace('/{ifp\s+(.+?)}/', '<?php if(cv($1)) { ?>', $str);
+        $str = preg_replace('/{ifpp\s+(.+?)}/', '<?php if(cp($1)) { ?>', $str);
+        $str = preg_replace('/{ife\s+(\S+)\s+(\S+)}/', '<?php if( ce($1 ,$2) ) { ?>', $str);
+        return $str;
+    }
+}
+if (!function_exists('objectArray')) {
+    function objectArray($array)
+    {
+        if (is_object($array)) {
+            $array = (array)$array;
+        }
+        if (is_array($array)) {
+            foreach ($array as $key => $value) {
+                $array[$key] = objectArray($value);
+            }
+        }
+        return $array;
+    }
+}
+
+
+if (!function_exists('my_link_extra')) {
+
+    function my_link_extra($type = 'content')
+    {
+
+        $content = "";
+
+        $extraContents = [];
+
+        Event::fire(new app\common\events\RenderingMyLink($extraContents));
+
+        return $type == 'content' ? $content . implode("\n", $extraContents) : implode("\n",
+            array_keys($extraContents));
+    }
+}
+
+if (!function_exists('can')) {
+    /**
+     * 权限判断
+     * @param $item   可以是item 或者是route
+     * @param bool $isRoute
+     * @return bool
+     */
+    function can($itemRoute, $isRoute = false)
+    {
+        /*if(config('app.menu_key') != 'menu'){
+            return true;
+        }*/
+        if ($isRoute == true) {
+            $item = \app\common\models\Menu::getItemByRoute($itemRoute);
+        } else {
+            $item = $itemRoute;
+        }
+        return PermissionService::can($item);
+    }
+}
+
+if (!function_exists('weAccount')) {
+    /**
+     * 获取微擎账号体系
+     * @return NULL|WeAccount
+     */
+    function weAccount()
+    {
+        load()->model('account');
+        return WeAccount::create();
+    }
+}
+
+
+if (!function_exists('yzWebUrl')) {
+    function yzWebUrl($route, $params = [])
+    {
+        return Url::web($route, $params);
+    }
+}
+
+if (!function_exists('yzAppUrl')) {
+    function yzAppUrl($route, $params = [])
+    {
+        return Url::app($route, $params);
+    }
+}
+
+if (!function_exists('yzApiUrl')) {
+    function yzApiUrl($route, $params = [])
+    {
+        return Url::api($route, $params);
+    }
+}
+
+if (!function_exists('yzPluginUrl')) {
+    function yzPluginUrl($route, $params = [])
+    {
+        return Url::plugin($route, $params);
+    }
+}
+
+if (!function_exists('yzPluginFullUrl')) {
+    function yzPluginFullUrl($route, $params = [])
+    {
+        return Url::absolutePlugin($route, $params);
+    }
+}
+
+if (!function_exists('yzWebFullUrl')) {
+    function yzWebFullUrl($route, $params = [])
+    {
+        return Url::absoluteWeb($route, $params);
+    }
+}
+
+if (!function_exists('yzAppFullUrl')) {
+    function yzAppFullUrl($route, $params = [])
+    {
+        return Url::absoluteApp($route, $params);
+    }
+}
+
+if (!function_exists('yzDiyFullUrl')) {
+    function yzDiyFullUrl($route, $params = [])
+    {
+        return Url::absoluteDiyApp($route, $params);
+    }
+}
+
+if (!function_exists('yzUrl')) {
+    function yzUrl($route, $params = [])
+    {
+        return Url::web($route, $params);
+    }
+}
+
+if (!function_exists('array_child_kv_exists')) {
+    function array_child_kv_exists($array, $childKey, $value)
+    {
+        $result = false;
+        if (is_array($array)) {
+            foreach ($array as $v) {
+                if (is_array($v) && isset($v[$childKey])) {
+                    $result = $v[$childKey] == $value;
+                }
+            }
+        }
+
+        return $result;
+    }
+}
+
+if (!function_exists('widget')) {
+    function widget($class, $params = [])
+    {
+        return (new $class($params))->run();
+    }
+}
+if (!function_exists('assets')) {
+
+    function assets($relativeUri)
+    {
+        // add query string to fresh cache
+        if (Str::startsWith($relativeUri, 'styles') || Str::startsWith($relativeUri, 'scripts')) {
+            return Url::shopUrl("resources/assets/dist/$relativeUri") . "?v=" . config('app.version');
+        } elseif (Str::startsWith($relativeUri, 'lang')) {
+            return Url::shopUrl("resources/$relativeUri");
+        } else {
+            return Url::shopUrl("resources/assets/$relativeUri");
+        }
+    }
+}
+if (!function_exists('static_url')) {
+
+    function static_url($relativeUri)
+    {
+        return Url::shopUrl('static/' . $relativeUri);
+    }
+}
+
+if (!function_exists('plugin')) {
+
+    function plugin($id)
+    {
+        return app('plugins')->getPlugin($id);
+    }
+}
+
+if (!function_exists('plugin_assets')) {
+
+    function plugin_assets($id, $relativeUri)
+    {
+        if ($plugin = plugin($id)) {
+            return $plugin->assets($relativeUri);
+        } else {
+            throw new InvalidArgumentException("No such plugin.");
+        }
+    }
+}
+
+if (!function_exists('json')) {
+
+    function json()
+    {
+        $args = func_get_args();
+
+        if (count($args) == 1 && is_array($args[0])) {
+            return Response::json($args[0]);
+        } elseif (count($args) == 3 && is_array($args[2])) {
+            // the third argument is array of extra fields
+            return Response::json(array_merge([
+                'errno' => $args[1],
+                'msg' => $args[0]
+            ], $args[2]));
+        } else {
+            return Response::json([
+                'errno' => Arr::get($args, 1, 1),
+                'msg' => $args[0]
+            ]);
+        }
+    }
+}
+
+if (!function_exists('yz_footer')) {
+
+    function yz_footer($page_identification = "")
+    {
+        $content = "";
+        /*
+                $scripts = [
+                    assets('scripts/app.min.js'),
+                    assets('lang/'.config('app.locale').'/locale.js'),
+                ];
+
+                if ($page_identification !== "") {
+                    $scripts[] = assets("scripts/$page_identification.js");
+                }
+
+                foreach ($scripts as $script) {
+                    $content .= "<script type=\"text/javascript\" src=\"$script\"></script>\n";
+                }
+        */
+        $customJs = option("custom_js");
+        $customJs && $content .= '<script>' . $customJs . '</script>';
+
+        $extraContents = [];
+
+        Event::fire(new app\common\events\RenderingFooter($extraContents));
+
+        return $content . implode("\n", $extraContents);
+    }
+}
+
+if (!function_exists('yz_header')) {
+
+    function yz_header($pageIdentification = "")
+    {
+        $content = "";
+        /*
+                $styles = [
+                    assets('styles/app.min.css'),
+                    assets('styles/skins/'.Option::get('color_scheme').'.min.css')
+                ];
+
+                if ($pageIdentification !== "") {
+                    $styles[] = assets("styles/$pageIdentification.css");
+                }
+
+                foreach ($styles as $style) {
+                    $content .= "<link rel=\"stylesheet\" href=\"$style\">\n";
+                }
+        */
+        $customCss = option("custom_css");
+        $customCss && $content .= '<style>' . option("custom_css") . '</style>';
+
+        $extraContents = [];
+
+        Event::fire(new app\common\events\RenderingHeader($extraContents));
+
+        return $content . implode("\n", $extraContents);
+    }
+}
+
+
+if (!function_exists('yz_menu')) {
+
+    function yz_menu($type)
+    {
+        $menu = config('menu');
+
+        Event::fire($type == "member" ? new app\common\events\ConfigureMemberMenu($menu)
+            : new app\common\events\ConfigureAdminMenu($menu));
+
+        if (!isset($menu[$type])) {
+            throw new InvalidArgumentException;
+        }
+
+        return yz_menu_render($menu[$type]);
+    }
+
+    function yz_menu_render($data)
+    {
+        $content = "";
+
+        foreach ($data as $key => $value) {
+            $active = app('request')->is(@$value['link']);
+
+            // also set parent as active if any child is active
+            foreach ((array)@$value['children'] as $childKey => $childValue) {
+                if (app('request')->is(@$childValue['link'])) {
+                    $active = true;
+                }
+            }
+
+            $content .= $active ? '<li class="active">' : '<li>';
+
+            if (isset($value['children'])) {
+                $content .= '<a href="#"><i class="fa ' . $value['icon'] . '"></i> <span>' . trans($value['title']) . '</span><span class="pull-right-container"><i class="fa fa-angle-left pull-right"></i></span></a>';
+                // recurse
+                $content .= '<ul class="treeview-menu" style="display: none;">' . yz_menu_render($value['children']) . '</ul>';
+            } else {
+                $content .= '<a href="' . url($value['link']) . '"><i class="fa ' . $value['icon'] . '"></i> <span>' . trans($value['title']) . '</span></a>';
+            }
+
+            $content .= '</li>';
+        }
+
+        return $content;
+    }
+}
+
+
+if (!function_exists('option')) {
+    /**
+     * Get / set the specified option value.
+     *
+     * If an array is passed as the key, we will assume you want to set an array of values.
+     *
+     * @param  array|string $key
+     * @param  mixed $default
+     * @param  raw $raw return raw value without convertion
+     * @return mixed
+     */
+    function option($key = null, $default = null, $raw = false)
+    {
+        $options = app('options');
+
+        if (is_null($key)) {
+            return $options;
+        }
+
+        if (is_array($key)) {
+            foreach ($key as $innerKey => $innerValue) {
+                $options->set($innerKey, $innerValue);
+            }
+            return;
+        }
+        $optionsData = $options->get();
+        return $optionsData[$key]['option_value'];
+//        return $options->get($key, $default, $raw);
+    }
+}
+if (!function_exists('float_greater')) {
+    function float_greater($number, $other_number)
+    {
+        return bccomp($number, $other_number) === 1;
+    }
+}
+if (!function_exists('float_lesser')) {
+    function float_lesser($number, $other_number)
+    {
+        return bccomp($number, $other_number) === -1;
+    }
+}
+if (!function_exists('float_equal')) {
+    function float_equal($number, $other_number)
+    {
+        return bccomp($number, $other_number) === 0;
+    }
+
+}
+
+if (!function_exists('sdd')) {
+    function sdd()
+    {
+        global $testDd;
+        $testDd = !$testDd;
+    }
+}
+if (!function_exists('tdd')) {
+    function tdd()
+    {
+        global $testDd;
+        if($testDd){
+            dd(func_get_args());
+        }
+    }
+
+}
+/*
+ * 生成一个随机订单号：如果需要唯一性，请自己验证重复调用
+ *
+ * @params string $prefix 标示 SN RV
+ * @params bool $numeric 是否为纯数字
+ *
+ * @return mixed
+ * @Author yitian */
+if (!function_exists('createNo')) {
+    function createNo($prefix, $length = 6, $numeric = FALSE)
+    {
+        return $prefix . date('YmdHis') . \app\common\helpers\Client::random($length, $numeric);
+    }
+}
+
+
+if (!function_exists('uploadImage')) {
+    function uploadImage($image)
+    {
+        $whiteList = array("png","jpg","bmp","gif","jpeg","PNG","JPG","BMP","GIF","JPEG");
+        $ext = $image->getClientOriginalExtension();
+        if(!in_array($ext, $whiteList)) {
+            return array('status'=>false,'msg'=>'请上传正确图片格式','data'=>null);
+        }
+
+        $sign_name = md5($image->getClientOriginalName()).time().'.'.$ext;
+        $dirto = public_path("upload/image/");
+        if (!is_dir($dirto)){
+            mkdir($dirto, 0777 , true);
+        }
+
+        $res = $image->move($dirto, $sign_name);
+        Oss::privateUpload('ledao', 'xmpy/'.$sign_name, $dirto.$sign_name);
+        if (!$res){
+            return array('status'=>false,'msg'=>'上传失败','data'=>null);
+        }else{
+            unlink($dirto.$sign_name);
+            return array('status'=>true,'msg'=>'上传成功','data'=>array('name'=>$sign_name ,'path'=>'xmpy/'.$sign_name, 'ext'=>$ext));
+        }
+    }
+
+}
+
+if (!function_exists('getCaseLogo')) {
+    function getCaseLogo($logo)
+    {
+        $return_avatar='';
+        if(empty($logo)){
+
+            $return_avatar = '/images/default-avatar.png';
+
+        }elseif(stripos($logo,'http')===false){
+
+            // if ($logo && \Storage::disk('oss')->exists($logo)) {
+            // $return_avatar = \AliyunOSS::getUrl($avatar, $expire = new \DateTime("+1 day"), $bucket = config('filesystems.disks.oss.bucket'));
+            if ($logo ) {
+                $return_avatar = "https://static.cnczxy.com/{$logo}_lite";
+            } else {
+                $return_avatar = '/images/default-avatar.png';
+            }
+
+        }else{
+
+            $return_avatar = str_replace('/064','/64',$logo);
+
+        }
+        return $return_avatar;
+    }
+}
+
